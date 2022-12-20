@@ -1,0 +1,18 @@
+[package]
+name = "learning_game_rust"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+specs = "*"
+specs-derive = "*"
+async-std = "*"
+futures = "*"
+tokio = { version="*",features=["full"] }
+
+[dependencies.sdl2]
+version = "*"
+default-features = false
+features = ["image", "ttf"]
