@@ -66,7 +66,7 @@ fn character_animation_frames(
     frames
 }
 
-fn initialize_player(world: &mut World, player_spritesheet: usize) -> Entity {
+fn initialize_player(world: &mut World, player_id: String, player_spritesheet: usize) -> Entity {
     let player_top_left_frame = Rect::new(0, 0, 26, 36);
 
     let player_animation = MovementAnimation {
@@ -97,7 +97,14 @@ fn initialize_player(world: &mut World, player_spritesheet: usize) -> Entity {
         .create_entity()
         .with(KeyboardControlled)
         .with(ExternalControlled)
-        .with(Player::default())
+        .with(Player::new(
+            player_id,
+            "".to_string(),
+            1,
+            Point::new(0, 0),
+            Point::new(0, 0),
+            1,
+        ))
         .with(Position(Point::new(0, 0)))
         .with(Velocity {
             speed: 0,
@@ -158,7 +165,8 @@ fn initialize_enemy(world: &mut World, enemy_spritesheet: usize, position: Point
 #[tokio::main]
 async fn main() -> Result<()> {
     let runtime: ServerRuntime = ServerRuntime::new();
-    let socket = &runtime.socket;
+    let send_socket = &runtime.send_socket;
+    let recv_socket = &runtime.recv_socket;
     let sdl_context = sdl2::init()?;
     let video_subsystem = sdl_context.video()?;
     let _image_context = image::init(InitFlag::PNG | InitFlag::JPG)?;
@@ -182,7 +190,7 @@ async fn main() -> Result<()> {
         .with(keyboard::Keyboard, "Keyboard", &[])
         // .with(physics::Physics, "Physics", &["Keyboard"])
         // .with(animator::Animator, "Animator", &["Keyboard"])
-        .with(physics::Physics, "Physics", &[])
+        // .with(physics::Physics, "Physics", &[])
         .with(animator::Animator, "Animator", &[])
         .build();
 
@@ -203,6 +211,7 @@ async fn main() -> Result<()> {
     world.insert(server_update);
     world.insert(shoot_command);
     world.insert(client_command);
+    world.insert(Player::default());
 
     let textures = [
         texture_creator.load_texture("assets/bardo.png")?,
@@ -213,7 +222,7 @@ async fn main() -> Result<()> {
     // Second texture in the textures array
     let enemy_spritesheet = 1;
 
-    initialize_player(&mut world, player_spritesheet);
+    // initialize_player(&mut world, player_spritesheet);
     // initialize_player(&mut world, player_spritesheet);
     // initialize_player(&mut world, player_spritesheet);
     // initialize_player(&mut world, player_spritesheet);
@@ -230,9 +239,26 @@ async fn main() -> Result<()> {
     // let mut attacks: VecDeque<AttackCommand> = VecDeque::new();
 
     // let listener = UdpSocket::bind(SERVER_ADDR)?;
-    socket.set_read_timeout(Some(Duration::new(0, 1_000_000_000u32 / 30)))?;
-    socket.connect(RECV_SERVER_ADDR)?;
-    socket.send(b"L1;blub_id")?;
+    send_socket.set_read_timeout(Some(Duration::new(0, 1_000)))?;
+    send_socket.set_write_timeout(Some(Duration::new(0, 1_000)))?;
+    recv_socket.set_read_timeout(Some(Duration::new(0, 1_000)))?;
+    recv_socket.set_write_timeout(Some(Duration::new(0, 1_000)))?;
+    send_socket.connect(SEND_SERVER_ADDR)?;
+    recv_socket.connect(RECV_SERVER_ADDR)?;
+    match recv_socket.send(b"L1;blub_id") {
+        Ok(_) => match recv_socket.recv(&mut []) {
+            Ok(_) => {}
+            _ => {}
+        },
+        _ => {}
+    }
+    match recv_socket.send(&format!("S0;{}", SEND_CLIENT_ADDR).into_bytes()) {
+        Ok(_) => match recv_socket.recv(&mut []) {
+            Ok(_) => {}
+            _ => {}
+        },
+        _ => {}
+    }
 
     game_loop(
         world,
@@ -240,7 +266,8 @@ async fn main() -> Result<()> {
         &textures,
         dispatcher,
         sdl_context.event_pump()?,
-        socket,
+        send_socket,
+        recv_socket,
         VecDeque::new(),
         VecDeque::new(),
     )
@@ -254,7 +281,8 @@ async fn game_loop<'a>(
     textures: &[Texture<'a>],
     mut dispatcher: Dispatcher<'a, 'a>,
     mut event_pump: EventPump,
-    socket: &UdpSocket,
+    send_socket: &UdpSocket,
+    recv_socket: &UdpSocket,
     mut movements: VecDeque<MovementCommand>,
     mut attacks: VecDeque<AttackCommand>,
 ) -> Result<()> {
@@ -402,9 +430,8 @@ async fn game_loop<'a>(
             MovementCommand::Move(direction) => {
                 let msg = format!("M0;blub_id;{}", direction);
                 println!("move command: {:?}", msg);
-                socket.connect(RECV_SERVER_ADDR)?;
-                match socket.send(&msg.into_bytes()) {
-                    Ok(_) => match socket.recv(&mut []) {
+                match recv_socket.send(&msg.into_bytes()) {
+                    Ok(_) => match recv_socket.recv(&mut []) {
                         Ok(_) => {}
                         _ => {}
                     },
@@ -418,7 +445,7 @@ async fn game_loop<'a>(
             Some(attacks.pop_front().unwrap_or(AttackCommand::Stop));
         *world.write_resource() = shoot_command;
 
-        let server_update: Option<ServerUpdate> = Some(update_from_server(&socket)?);
+        let server_update: Option<ServerUpdate> = Some(update_from_server(&send_socket)?);
         let server_update_clone = server_update.clone();
         *world.write_resource() = server_update;
 
@@ -434,16 +461,22 @@ async fn game_loop<'a>(
                 //     let new_player = initialize_player(&mut world, 0);
                 //     entities.insert(player_id.to_string(), new_player);
                 // }
-                println!("Login for {:?}", player_id);
+                // println!("Login for {:?}", player_id);
             }
             ServerUpdate::Update(player) => {
-                // if !entities.contains_key(&player.id) {
-                //     let new_player = initialize_player(&mut world, 0);
-                //     entities.insert(player.id.to_string(), new_player);
-                // }
-                println!("update with {:?}", player);
+                // println!("Update for {:?}", player);
+                // println!("entities: {:?}", entities);
+                if !entities.contains_key(&player.id) {
+                    let new_player = initialize_player(&mut world, player.id.clone(), 0);
+                    entities.insert(player.id.to_string(), new_player);
+                }
             }
         }
+        // let mut entt = entities.clone();
+        // // let mut entt: HashMap<String, Entity> = HashMap::new();
+        // for entity in entities.keys() {
+        //     *world.write_resource() = Player::default();
+        // }
         // let p_en = initialize_player(&mut world, 0);
         // println!(
         //     "{:?} --- player: {:?}",
@@ -480,27 +513,35 @@ fn remove_entities(world: &mut World, entity: Entity) {
 }
 
 fn update_from_server(socket: &UdpSocket) -> Result<ServerUpdate> {
-    let mut buf = [0; 128];
-    socket.connect(SEND_SERVER_ADDR)?;
-    let (number_of_bytes, src) = socket.recv_from(&mut buf).unwrap_or((
-        1,
-        SocketAddr::new(std::net::IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 1),
-    ));
-    socket.send_to(&[0], src)?;
-    if number_of_bytes == 1 {
-        return Ok(ServerUpdate::Nothing);
-    } else {
-        match get_operation_from(&buf) {
-            "L1;" => {
-                let player_id: &str = get_context_from(&buf, number_of_bytes);
-                return Ok(ServerUpdate::Login(player_id.to_string()));
+    let mut buf = [0; 200];
+    println!("start update from server; ");
+    match socket.recv_from(&mut buf) {
+        Ok((number_of_bytes, src)) => {
+            println!("update from server; {}", number_of_bytes);
+            match socket.send_to(&[0], src) {
+                _ => {}
             }
-            "P0;" => {
-                let player = Player::from_str(get_context_from(&buf, number_of_bytes));
-                println!("update from server: P0; {:?}", player);
-                return Ok(ServerUpdate::Update(player));
+            if number_of_bytes == 1 {
+                return Ok(ServerUpdate::Nothing);
+            } else {
+                match get_operation_from(&buf) {
+                    "L1;" => {
+                        let player_id: &str = get_context_from(&buf, number_of_bytes);
+                        println!("get op L1; {}", player_id);
+                        return Ok(ServerUpdate::Login(player_id.to_string()));
+                    }
+                    "P0;" => {
+                        let player = Player::from_str(get_context_from(&buf, number_of_bytes));
+                        println!("update from server: P0; {:?}", player);
+                        return Ok(ServerUpdate::Update(player));
+                    }
+                    _ => Ok(ServerUpdate::Nothing),
+                }
             }
-            _ => Ok(ServerUpdate::Nothing),
+        }
+        _ => {
+            println!("update from server, nothing to do");
+            Ok(ServerUpdate::Nothing)
         }
     }
 }

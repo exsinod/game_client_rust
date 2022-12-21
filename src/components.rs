@@ -3,6 +3,8 @@ use std::{fmt, net::UdpSocket};
 use sdl2::rect::{Point, Rect};
 use specs::{prelude::*, rayon::vec};
 use specs_derive::Component;
+pub static SEND_CLIENT_ADDR: &str = "127.0.0.1:8767";
+pub static RECV_CLIENT_ADDR: &str = "127.0.0.1:8768";
 
 pub struct Dimension {
     pub width: u32,
@@ -40,14 +42,16 @@ pub enum AttackCommand {
 }
 #[derive(Component, Debug)]
 pub struct ServerRuntime {
-    pub socket: UdpSocket,
+    pub send_socket: UdpSocket,
+    pub recv_socket: UdpSocket,
     players: Vec<Player>,
 }
 
 impl ServerRuntime {
     pub fn new() -> Self {
         Self {
-            socket: UdpSocket::bind(&"127.0.0.1:8767").unwrap(),
+            send_socket: UdpSocket::bind(SEND_CLIENT_ADDR).unwrap(),
+            recv_socket: UdpSocket::bind(RECV_CLIENT_ADDR).unwrap(),
             players: Vec::new(),
         }
     }
@@ -76,17 +80,18 @@ impl fmt::Display for Direction {
 #[storage(VecStorage)]
 pub struct Player {
     pub id: String,
-    char_name: String,
-    skin: usize,
+    pub char_name: String,
+    pub skin: usize,
     pub pos: Point,
-    team: u8,
-    world_pos: Point,
+    pub team: u8,
+    pub world_pos: Point,
 }
 
 impl Default for Player {
     fn default() -> Self {
         Self {
-            id: "MTI3LjAuMC4xOjg3Njc=".to_string(),
+            // id: "MTI3LjAuMC4xOjg3Njc=".to_string(),
+            id: String::default(),
             char_name: String::default(),
             skin: usize::default(),
             pos: Point::new(0, 0),
@@ -97,7 +102,7 @@ impl Default for Player {
 }
 
 impl Player {
-    fn new(
+    pub fn new(
         id: String,
         char_name: String,
         skin: usize,
