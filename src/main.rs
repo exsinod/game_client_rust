@@ -14,9 +14,8 @@ use sdl2::pixels::Color;
 use sdl2::rect::{Point, Rect};
 use sdl2::render::{Texture, WindowCanvas};
 use sdl2::EventPump;
-use std::net::{Ipv4Addr, SocketAddr, UdpSocket};
+use std::net::UdpSocket;
 use std::str;
-use tokio;
 // "self" imports the "image" module itself as well as everything else we listed
 use sdl2::image::{self, InitFlag, LoadTexture};
 use std::collections::{HashMap, VecDeque};
@@ -27,8 +26,8 @@ use std::time::Duration;
 
 use crate::components::*;
 
-static SEND_SERVER_ADDR: &str = "127.0.0.1:8877";
-static RECV_SERVER_ADDR: &str = "127.0.0.1:8878";
+static SEND_SERVER_ADDR: &str = "192.168.0.114:8877";
+static RECV_SERVER_ADDR: &str = "192.168.0.114:8878";
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
 /// Returns the row of the spritesheet corresponding to the given direction
@@ -119,51 +118,7 @@ fn initialize_player(world: &mut World, player_id: String, player_spritesheet: u
         .build()
 }
 
-fn initialize_enemy(world: &mut World, enemy_spritesheet: usize, position: Point) {
-    let enemy_top_left_frame = Rect::new(0, 0, 32, 36);
-
-    let enemy_animation = MovementAnimation {
-        current_frame: 0,
-        up_frames: character_animation_frames(
-            enemy_spritesheet,
-            enemy_top_left_frame,
-            Direction::Up,
-        ),
-        down_frames: character_animation_frames(
-            enemy_spritesheet,
-            enemy_top_left_frame,
-            Direction::Down,
-        ),
-        left_frames: character_animation_frames(
-            enemy_spritesheet,
-            enemy_top_left_frame,
-            Direction::Left,
-        ),
-        right_frames: character_animation_frames(
-            enemy_spritesheet,
-            enemy_top_left_frame,
-            Direction::Right,
-        ),
-    };
-
-    world
-        .create_entity()
-        .with(Position(position))
-        .with(Velocity {
-            speed: 2,
-            direction: Direction::Right,
-        })
-        .with(Status {
-            alive: true,
-            health: 100,
-        })
-        .with(enemy_animation.right_frames[0].clone())
-        .with(enemy_animation)
-        .build();
-}
-
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
     let runtime: ServerRuntime = ServerRuntime::new();
     let send_socket = &runtime.send_socket;
     let recv_socket = &runtime.recv_socket;
@@ -177,7 +132,7 @@ async fn main() -> Result<()> {
         .build()
         .expect("could not initialize video subsystem");
 
-    let mut canvas = window
+    let canvas = window
         .into_canvas()
         .build()
         .expect("could not make a canvas");
@@ -201,44 +156,31 @@ async fn main() -> Result<()> {
     ui::SystemData::setup(&mut world);
 
     // Initialize resource
-    // let player = Player::default();
     let client_command: Option<ClientCommand> = None;
     let server_update: Option<ServerUpdate> = None;
     let movement_command: Option<MovementCommand> = None;
     let shoot_command: Option<AttackCommand> = None;
-    // world.insert(player);
     world.insert(movement_command);
     world.insert(server_update);
     world.insert(shoot_command);
     world.insert(client_command);
-    world.insert(Player::default());
 
     let textures = [
         texture_creator.load_texture("assets/bardo.png")?,
         texture_creator.load_texture("assets/reaper.png")?,
     ];
     // First texture in textures array
-    let player_spritesheet = 0;
+    let _player_spritesheet = 0;
     // Second texture in the textures array
-    let enemy_spritesheet = 1;
-
-    // initialize_player(&mut world, player_spritesheet);
-    // initialize_player(&mut world, player_spritesheet);
-    // initialize_player(&mut world, player_spritesheet);
-    // initialize_player(&mut world, player_spritesheet);
+    let _enemy_spritesheet = 1;
 
     // initialize_enemy(&mut world, enemy_spritesheet, Point::new(-150, -150));
     // initialize_enemy(&mut world, enemy_spritesheet, Point::new(150, -190));
     // initialize_enemy(&mut world, enemy_spritesheet, Point::new(-150, 170));
 
+    // Create UI
     world.create_entity().with(UiComponent {}).build();
 
-    // let mut event_pump = sdl_context.event_pump()?;
-    // let mut client_commands: VecDeque<ClientCommand> = VecDeque::new();
-    // let mut movements: VecDeque<MovementCommand> = VecDeque::new();
-    // let mut attacks: VecDeque<AttackCommand> = VecDeque::new();
-
-    // let listener = UdpSocket::bind(SERVER_ADDR)?;
     send_socket.set_read_timeout(Some(Duration::new(0, 1_000)))?;
     send_socket.set_write_timeout(Some(Duration::new(0, 1_000)))?;
     recv_socket.set_read_timeout(Some(Duration::new(0, 1_000)))?;
@@ -270,12 +212,11 @@ async fn main() -> Result<()> {
         recv_socket,
         VecDeque::new(),
         VecDeque::new(),
-    )
-    .await?;
+    )?;
     Ok(())
 }
 
-async fn game_loop<'a>(
+fn game_loop<'a>(
     mut world: World,
     mut canvas: WindowCanvas,
     textures: &[Texture<'a>],
@@ -429,7 +370,6 @@ async fn game_loop<'a>(
         match movement_command {
             MovementCommand::Move(direction) => {
                 let msg = format!("M0;blub_id;{}", direction);
-                println!("move command: {:?}", msg);
                 match recv_socket.send(&msg.into_bytes()) {
                     Ok(_) => match recv_socket.recv(&mut []) {
                         Ok(_) => {}
@@ -445,50 +385,23 @@ async fn game_loop<'a>(
             Some(attacks.pop_front().unwrap_or(AttackCommand::Stop));
         *world.write_resource() = shoot_command;
 
-        let server_update: Option<ServerUpdate> = Some(update_from_server(&send_socket)?);
-        let server_update_clone = server_update.clone();
-        *world.write_resource() = server_update;
-
-        match &server_update_clone.unwrap() {
-            ServerUpdate::Nothing => {
-                //     entities
-                //         .values()
-                //         .for_each(|entity| remove_entities(&mut world, *entity));
-                //     entities.clear();
-            }
-            ServerUpdate::Login(player_id) => {
-                // if !entities.contains_key(player_id) {
-                //     let new_player = initialize_player(&mut world, 0);
-                //     entities.insert(player_id.to_string(), new_player);
-                // }
-                // println!("Login for {:?}", player_id);
-            }
-            ServerUpdate::Update(player) => {
-                // println!("Update for {:?}", player);
-                // println!("entities: {:?}", entities);
-                if !entities.contains_key(&player.id) {
-                    let new_player = initialize_player(&mut world, player.id.clone(), 0);
-                    entities.insert(player.id.to_string(), new_player);
+        match update_from_server(&send_socket) {
+            Ok(server_update) => {
+                match &server_update {
+                    ServerUpdate::Update(player_update) => {
+                        if !entities.contains_key(&player_update.id) {
+                            let new_player =
+                                initialize_player(&mut world, player_update.id.clone(), 0);
+                            entities.insert(player_update.id.to_string(), new_player);
+                        }
+                    }
+                    _ => {}
                 }
+                *world.write_resource() = Some(server_update);
             }
+            _ => {}
         }
-        // let mut entt = entities.clone();
-        // // let mut entt: HashMap<String, Entity> = HashMap::new();
-        // for entity in entities.keys() {
-        //     *world.write_resource() = Player::default();
-        // }
-        // let p_en = initialize_player(&mut world, 0);
-        // println!(
-        //     "{:?} --- player: {:?}",
-        //     world.entities().join().collect::<Vec<_>>(),
-        //     world.entities().entity(p_en.id())
-        // );
-        // let player_entity = world.entities().entity(99);
-        // println!(
-        //     "{:?} --- {:?}",
-        //     world.entities().join().collect::<Vec<_>>(),
-        //     player_entity.gen().is_alive()
-        // );
+
         // Update
         dispatcher.dispatch(&mut world);
         world.maintain();
@@ -508,16 +421,17 @@ async fn game_loop<'a>(
     }
     Ok(())
 }
-fn remove_entities(world: &mut World, entity: Entity) {
+
+fn _remove_entities(world: &mut World, entity: Entity) {
     world.entities().delete(entity).unwrap();
 }
 
 fn update_from_server(socket: &UdpSocket) -> Result<ServerUpdate> {
     let mut buf = [0; 200];
-    println!("start update from server; ");
+    // println!("start update from server; ");
     match socket.recv_from(&mut buf) {
         Ok((number_of_bytes, src)) => {
-            println!("update from server; {}", number_of_bytes);
+            // println!("update from server; {}", number_of_bytes);
             match socket.send_to(&[0], src) {
                 _ => {}
             }
@@ -527,12 +441,12 @@ fn update_from_server(socket: &UdpSocket) -> Result<ServerUpdate> {
                 match get_operation_from(&buf) {
                     "L1;" => {
                         let player_id: &str = get_context_from(&buf, number_of_bytes);
-                        println!("get op L1; {}", player_id);
+                        // println!("get op L1; {}", player_id);
                         return Ok(ServerUpdate::Login(player_id.to_string()));
                     }
                     "P0;" => {
                         let player = Player::from_str(get_context_from(&buf, number_of_bytes));
-                        println!("update from server: P0; {:?}", player);
+                        // println!("update from server: P0; {:?}", player);
                         return Ok(ServerUpdate::Update(player));
                     }
                     _ => Ok(ServerUpdate::Nothing),
@@ -540,41 +454,10 @@ fn update_from_server(socket: &UdpSocket) -> Result<ServerUpdate> {
             }
         }
         _ => {
-            println!("update from server, nothing to do");
+            // println!("update from server, nothing to do");
             Ok(ServerUpdate::Nothing)
         }
     }
-}
-
-fn check_for_client_update(socket: &UdpSocket) -> Result<ClientCommand> {
-    let mut buf = [0; 128];
-    let number_of_bytes = socket.recv(&mut buf).unwrap_or(1);
-    if number_of_bytes == 1 {
-        return Ok(ClientCommand::Stop);
-    }
-    let src = "ip addr";
-    println!("handling message from {}", src);
-    match get_operation_from(&buf) {
-        "L0;" => {
-            new_login(get_context_from(&buf, number_of_bytes));
-            Ok(ClientCommand::Stop)
-        }
-        "M0;" => {
-            get_context_from(&buf, number_of_bytes);
-            Ok(ClientCommand::Move(Direction::Up))
-        }
-        _ => {
-            println!("Unknown command: {:?}", buf);
-            Ok(ClientCommand::Stop)
-        }
-    }
-}
-
-fn new_login(player_data: &str) {
-    let player_data_split: Vec<&str> = player_data.split(";").collect();
-    println!("{:?}", player_data_split);
-    // players.push(Playerx::new(player_data_split[0].to_string(), 1));
-    println!("New user logs in.  Current players: ");
 }
 
 fn get_operation_from(buffer: &[u8]) -> &str {

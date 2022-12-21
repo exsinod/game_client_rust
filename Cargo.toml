@@ -8,9 +8,6 @@ edition = "2021"
 [dependencies]
 specs = "*"
 specs-derive = "*"
-async-std = "*"
-futures = "*"
-tokio = { version="*",features=["full"] }
 
 [dependencies.sdl2]
 version = "*"
