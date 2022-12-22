@@ -8,13 +8,14 @@ mod sprites;
 mod status;
 mod ui;
 
+use log::{debug, error, info, trace};
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
 use sdl2::pixels::Color;
 use sdl2::rect::{Point, Rect};
 use sdl2::render::{Texture, WindowCanvas};
 use sdl2::EventPump;
-use std::net::UdpSocket;
+use std::net::{SocketAddr, UdpSocket};
 use std::str;
 // "self" imports the "image" module itself as well as everything else we listed
 use sdl2::image::{self, InitFlag, LoadTexture};
@@ -22,12 +23,11 @@ use std::collections::{HashMap, VecDeque};
 
 use specs::prelude::*;
 
+use rand::Rng;
 use std::time::Duration;
 
 use crate::components::*;
 
-static SEND_SERVER_ADDR: &str = "192.168.0.114:8877";
-static RECV_SERVER_ADDR: &str = "192.168.0.114:8878";
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
 /// Returns the row of the spritesheet corresponding to the given direction
@@ -119,7 +119,10 @@ fn initialize_player(world: &mut World, player_id: String, player_spritesheet: u
 }
 
 fn main() -> Result<()> {
-    let runtime: ServerRuntime = ServerRuntime::new();
+    env_logger::init();
+    let random_socket_port = rand::thread_rng().gen::<u16>();
+    println!("socket_port: {}", random_socket_port);
+    let runtime: ServerRuntime = ServerRuntime::new(8767);
     let send_socket = &runtime.send_socket;
     let recv_socket = &runtime.recv_socket;
     let sdl_context = sdl2::init()?;
@@ -185,21 +188,24 @@ fn main() -> Result<()> {
     send_socket.set_write_timeout(Some(Duration::new(0, 1_000)))?;
     recv_socket.set_read_timeout(Some(Duration::new(0, 1_000)))?;
     recv_socket.set_write_timeout(Some(Duration::new(0, 1_000)))?;
-    send_socket.connect(SEND_SERVER_ADDR)?;
-    recv_socket.connect(RECV_SERVER_ADDR)?;
-    match recv_socket.send(b"L1;blub_id") {
-        Ok(_) => match recv_socket.recv(&mut []) {
-            Ok(_) => {}
-            _ => {}
-        },
-        _ => {}
-    }
-    match recv_socket.send(&format!("S0;{}", SEND_CLIENT_ADDR).into_bytes()) {
-        Ok(_) => match recv_socket.recv(&mut []) {
-            Ok(_) => {}
-            _ => {}
-        },
-        _ => {}
+    send_socket.connect(SocketAddr::from((SEND_SERVER_ADDR, SEND_SERVER_PORT)))?;
+    recv_socket.connect(SocketAddr::from((RECV_SERVER_ADDR, RECV_SERVER_PORT)))?;
+    match recv_socket.send_to(
+        b"L1;blub_id",
+        SocketAddr::from((RECV_SERVER_ADDR, RECV_SERVER_PORT)),
+    ) {
+        Ok(number_of_bytes) => {
+            trace!("sent {} bytes to login", number_of_bytes);
+            match recv_socket.recv_from(&mut []) {
+                Ok(_) => {}
+                Err(error) => {
+                    trace!("recv login msg: {}", error)
+                }
+            }
+        }
+        Err(error) => {
+            trace!("send login msg: {}", error)
+        }
     }
 
     game_loop(
@@ -370,12 +376,22 @@ fn game_loop<'a>(
         match movement_command {
             MovementCommand::Move(direction) => {
                 let msg = format!("M0;blub_id;{}", direction);
+                recv_socket
+                    .connect(SocketAddr::from((RECV_SERVER_ADDR, RECV_SERVER_PORT)))
+                    .unwrap();
                 match recv_socket.send(&msg.into_bytes()) {
-                    Ok(_) => match recv_socket.recv(&mut []) {
-                        Ok(_) => {}
-                        _ => {}
-                    },
-                    _ => {}
+                    Ok(_) => {
+                        trace!("send successful");
+                        match recv_socket.recv(&mut []) {
+                            Ok(_) => {}
+                            Err(error) => {
+                                trace!("ack Move command: {}", error)
+                            }
+                        }
+                    }
+                    Err(error) => {
+                        trace!("sending Move command: {}", error)
+                    }
                 }
             }
             MovementCommand::Stop => {}
@@ -428,10 +444,9 @@ fn _remove_entities(world: &mut World, entity: Entity) {
 
 fn update_from_server(socket: &UdpSocket) -> Result<ServerUpdate> {
     let mut buf = [0; 200];
-    // println!("start update from server; ");
     match socket.recv_from(&mut buf) {
         Ok((number_of_bytes, src)) => {
-            // println!("update from server; {}", number_of_bytes);
+            trace!("update from server; {}", number_of_bytes);
             match socket.send_to(&[0], src) {
                 _ => {}
             }
@@ -441,12 +456,12 @@ fn update_from_server(socket: &UdpSocket) -> Result<ServerUpdate> {
                 match get_operation_from(&buf) {
                     "L1;" => {
                         let player_id: &str = get_context_from(&buf, number_of_bytes);
-                        // println!("get op L1; {}", player_id);
+                        debug!("get op L1; {}", player_id);
                         return Ok(ServerUpdate::Login(player_id.to_string()));
                     }
                     "P0;" => {
                         let player = Player::from_str(get_context_from(&buf, number_of_bytes));
-                        // println!("update from server: P0; {:?}", player);
+                        debug!("update from server: P0; {:?}", player);
                         return Ok(ServerUpdate::Update(player));
                     }
                     _ => Ok(ServerUpdate::Nothing),
@@ -454,7 +469,7 @@ fn update_from_server(socket: &UdpSocket) -> Result<ServerUpdate> {
             }
         }
         _ => {
-            // println!("update from server, nothing to do");
+            trace!("update from server, nothing to do");
             Ok(ServerUpdate::Nothing)
         }
     }

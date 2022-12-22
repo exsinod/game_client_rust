@@ -1,10 +1,20 @@
-use std::{fmt, net::UdpSocket};
+use std::{
+    fmt,
+    net::{SocketAddr, UdpSocket},
+};
 
 use sdl2::rect::{Point, Rect};
-use specs::{prelude::*, rayon::vec};
+use specs::prelude::*;
 use specs_derive::Component;
-pub static SEND_CLIENT_ADDR: &str = "127.0.0.1:8767";
-pub static RECV_CLIENT_ADDR: &str = "127.0.0.1:8768";
+
+pub static RECV_SERVER_PORT: u16 = 8877;
+pub static SEND_SERVER_PORT: u16 = 8878;
+// pub static RECV_SERVER_ADDR: [u8; 4] = [127, 0, 0, 1];
+pub static RECV_SERVER_ADDR: [u8; 4] = [192, 168, 0, 114];
+pub static SEND_SERVER_ADDR: [u8; 4] = [192, 168, 0, 114];
+// pub static SEND_SERVER_ADDR: [u8; 4] = [127, 0, 0, 1];
+
+static CLIENT_ADDR: [u8; 4] = [127, 0, 0, 1];
 
 pub struct Dimension {
     pub width: u32,
@@ -48,10 +58,12 @@ pub struct ServerRuntime {
 }
 
 impl ServerRuntime {
-    pub fn new() -> Self {
+    pub fn new(recv_socket_port: u16) -> Self {
         Self {
-            send_socket: UdpSocket::bind(SEND_CLIENT_ADDR).unwrap(),
-            recv_socket: UdpSocket::bind(RECV_CLIENT_ADDR).unwrap(),
+            recv_socket: UdpSocket::bind(SocketAddr::from((CLIENT_ADDR, recv_socket_port)))
+                .unwrap(),
+            send_socket: UdpSocket::bind(SocketAddr::from((CLIENT_ADDR, recv_socket_port + 1)))
+                .unwrap(),
             players: Vec::new(),
         }
     }

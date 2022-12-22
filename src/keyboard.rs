@@ -1,4 +1,4 @@
-use std::net::UdpSocket;
+use log::trace;
 
 use specs::prelude::*;
 
@@ -22,10 +22,10 @@ impl<'a> System<'a> for Keyboard {
 
         match movement_command {
             MovementCommand::Move(direction) => {
-                // println!("move: updating speed and vel");
+                trace!("move: updating speed and vel");
             }
             MovementCommand::Stop => {
-                // println!("stop: not updating speed and vel");
+                trace!("stop: not updating speed and vel");
             }
         }
     }

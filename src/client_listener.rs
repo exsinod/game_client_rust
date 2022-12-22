@@ -1,3 +1,4 @@
+use log::trace;
 use specs::prelude::*;
 
 use crate::{
@@ -24,7 +25,7 @@ impl<'a> System<'a> for ClientListener {
 
         match server_update {
             ServerUpdate::Update(updated_player) => {
-                println!("server update: {:?}", updated_player);
+                trace!("server update: {:?}", updated_player);
                 for (mut player, position) in (&mut data.2, &mut data.3).join() {
                     if player.id == updated_player.id {
                         position.0.x = updated_player.pos.x;

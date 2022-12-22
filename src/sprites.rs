@@ -1,3 +1,4 @@
+use log::trace;
 use sdl2::rect::{Point, Rect};
 use sdl2::render::{Texture, WindowCanvas};
 use specs::prelude::*;
@@ -21,7 +22,7 @@ pub fn draw_to_canvas(
 
     let bla = &*data.0;
     for (pos, player, sprite) in (&data.1, &data.2, &mut data.3).join() {
-        println!("rendering: {:?}", player);
+        trace!("rendering: {:?}", player);
         let current_frame = sprite.region;
         // Treat the center of the screen as the (0, 0) coordinate
         let screen_position = pos.0 + Point::new(width as i32 / 2, (height as i32 - 100) / 2);
