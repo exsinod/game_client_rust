@@ -2,10 +2,9 @@ use log::trace;
 use specs::prelude::*;
 
 use crate::{
-    components::{ExternalControlled, Player, Position, Velocity},
-    ClientCommand, ServerUpdate,
+    components::{ExternalControlled, Player, Position},
+    ServerUpdate,
 };
-const PLAYER_MOVEMENT_SPEED: i32 = 10;
 
 pub struct ClientListener;
 
@@ -37,8 +36,6 @@ impl<'a> System<'a> for ClientListener {
                 }
             }
             _ => {}
-            // ServerUpdate::Nothing => &default_player,
-            // ServerUpdate::Login(_) => &default_player,
         };
     }
 }

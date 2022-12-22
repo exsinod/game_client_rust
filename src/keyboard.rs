@@ -21,7 +21,7 @@ impl<'a> System<'a> for Keyboard {
         };
 
         match movement_command {
-            MovementCommand::Move(direction) => {
+            MovementCommand::Move(_direction) => {
                 trace!("move: updating speed and vel");
             }
             MovementCommand::Stop => {

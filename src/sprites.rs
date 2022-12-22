@@ -20,7 +20,6 @@ pub fn draw_to_canvas(
 ) -> Result<(), String> {
     let (width, height) = canvas.output_size()?;
 
-    let bla = &*data.0;
     for (pos, player, sprite) in (&data.1, &data.2, &mut data.3).join() {
         trace!("rendering: {:?}", player);
         let current_frame = sprite.region;

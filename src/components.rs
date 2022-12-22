@@ -9,12 +9,8 @@ use specs_derive::Component;
 
 pub static RECV_SERVER_PORT: u16 = 8877;
 pub static SEND_SERVER_PORT: u16 = 8878;
-// pub static RECV_SERVER_ADDR: [u8; 4] = [127, 0, 0, 1];
-pub static RECV_SERVER_ADDR: [u8; 4] = [192, 168, 0, 114];
-pub static SEND_SERVER_ADDR: [u8; 4] = [192, 168, 0, 114];
-// pub static SEND_SERVER_ADDR: [u8; 4] = [127, 0, 0, 1];
 
-static CLIENT_ADDR: [u8; 4] = [127, 0, 0, 1];
+static CLIENT_ADDR: [u8; 4] = [0, 0, 0, 0];
 
 pub struct Dimension {
     pub width: u32,
@@ -33,13 +29,6 @@ pub enum ServerUpdate {
 }
 
 #[derive(Copy, Clone, Debug)]
-pub enum ClientCommand {
-    Stop,
-    Action(),
-    Move(Direction),
-}
-
-#[derive(Copy, Clone, Debug)]
 pub enum MovementCommand {
     Stop,
     Move(Direction),
@@ -54,17 +43,15 @@ pub enum AttackCommand {
 pub struct ServerRuntime {
     pub send_socket: UdpSocket,
     pub recv_socket: UdpSocket,
-    players: Vec<Player>,
 }
 
 impl ServerRuntime {
-    pub fn new(recv_socket_port: u16) -> Self {
+    pub fn new(client_socket_port: u16) -> Self {
         Self {
-            recv_socket: UdpSocket::bind(SocketAddr::from((CLIENT_ADDR, recv_socket_port)))
+            recv_socket: UdpSocket::bind(SocketAddr::from((CLIENT_ADDR, client_socket_port)))
                 .unwrap(),
-            send_socket: UdpSocket::bind(SocketAddr::from((CLIENT_ADDR, recv_socket_port + 1)))
+            send_socket: UdpSocket::bind(SocketAddr::from((CLIENT_ADDR, client_socket_port + 1)))
                 .unwrap(),
-            players: Vec::new(),
         }
     }
 }

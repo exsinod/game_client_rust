@@ -8,7 +8,7 @@ mod sprites;
 mod status;
 mod ui;
 
-use log::{debug, error, info, trace};
+use log::{debug, trace};
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
 use sdl2::pixels::Color;
@@ -16,7 +16,7 @@ use sdl2::rect::{Point, Rect};
 use sdl2::render::{Texture, WindowCanvas};
 use sdl2::EventPump;
 use std::net::{SocketAddr, UdpSocket};
-use std::str;
+use std::{env, str};
 // "self" imports the "image" module itself as well as everything else we listed
 use sdl2::image::{self, InitFlag, LoadTexture};
 use std::collections::{HashMap, VecDeque};
@@ -120,9 +120,21 @@ fn initialize_player(world: &mut World, player_id: String, player_spritesheet: u
 
 fn main() -> Result<()> {
     env_logger::init();
+    let args: Vec<String> = env::args().collect();
+    let server_addr_parts: &Vec<u8> = &args[1]
+        .split(".")
+        .map(|part| u8::from_str_radix(part, 10).unwrap())
+        .collect::<Vec<u8>>();
+    let server_addr = [
+        server_addr_parts[0],
+        server_addr_parts[1],
+        server_addr_parts[2],
+        server_addr_parts[3],
+    ];
+    debug!("server addr: {:?}", server_addr);
     let random_socket_port = rand::thread_rng().gen::<u16>();
-    println!("socket_port: {}", random_socket_port);
-    let runtime: ServerRuntime = ServerRuntime::new(8767);
+    debug!("socket_port: {}", random_socket_port);
+    let runtime: ServerRuntime = ServerRuntime::new(random_socket_port);
     let send_socket = &runtime.send_socket;
     let recv_socket = &runtime.recv_socket;
     let sdl_context = sdl2::init()?;
@@ -159,18 +171,18 @@ fn main() -> Result<()> {
     ui::SystemData::setup(&mut world);
 
     // Initialize resource
-    let client_command: Option<ClientCommand> = None;
     let server_update: Option<ServerUpdate> = None;
     let movement_command: Option<MovementCommand> = None;
     let shoot_command: Option<AttackCommand> = None;
     world.insert(movement_command);
     world.insert(server_update);
     world.insert(shoot_command);
-    world.insert(client_command);
 
+    let bardo = include_bytes!("../assets/bardo.png");
+    let reaper = include_bytes!("../assets/reaper.png");
     let textures = [
-        texture_creator.load_texture("assets/bardo.png")?,
-        texture_creator.load_texture("assets/reaper.png")?,
+        texture_creator.load_texture_bytes(bardo)?,
+        texture_creator.load_texture_bytes(reaper)?,
     ];
     // First texture in textures array
     let _player_spritesheet = 0;
@@ -188,12 +200,9 @@ fn main() -> Result<()> {
     send_socket.set_write_timeout(Some(Duration::new(0, 1_000)))?;
     recv_socket.set_read_timeout(Some(Duration::new(0, 1_000)))?;
     recv_socket.set_write_timeout(Some(Duration::new(0, 1_000)))?;
-    send_socket.connect(SocketAddr::from((SEND_SERVER_ADDR, SEND_SERVER_PORT)))?;
-    recv_socket.connect(SocketAddr::from((RECV_SERVER_ADDR, RECV_SERVER_PORT)))?;
-    match recv_socket.send_to(
-        b"L1;blub_id",
-        SocketAddr::from((RECV_SERVER_ADDR, RECV_SERVER_PORT)),
-    ) {
+    send_socket.connect(SocketAddr::from((server_addr, SEND_SERVER_PORT)))?;
+    recv_socket.connect(SocketAddr::from((server_addr, RECV_SERVER_PORT)))?;
+    match recv_socket.send(b"L1;blub_id") {
         Ok(number_of_bytes) => {
             trace!("sent {} bytes to login", number_of_bytes);
             match recv_socket.recv_from(&mut []) {
@@ -376,9 +385,6 @@ fn game_loop<'a>(
         match movement_command {
             MovementCommand::Move(direction) => {
                 let msg = format!("M0;blub_id;{}", direction);
-                recv_socket
-                    .connect(SocketAddr::from((RECV_SERVER_ADDR, RECV_SERVER_PORT)))
-                    .unwrap();
                 match recv_socket.send(&msg.into_bytes()) {
                     Ok(_) => {
                         trace!("send successful");
