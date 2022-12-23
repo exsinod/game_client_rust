@@ -8,7 +8,7 @@ mod sprites;
 mod status;
 mod ui;
 
-use log::{debug, trace};
+use log::{debug, error, trace};
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
 use sdl2::pixels::Color;
@@ -37,6 +37,7 @@ fn direction_spritesheet_row(direction: Direction) -> i32 {
         Direction::Down => 0,
         Direction::Left => 1,
         Direction::Right => 2,
+        Direction::Stationary => 4,
     }
 }
 
@@ -102,13 +103,10 @@ fn initialize_player(world: &mut World, player_id: String, player_spritesheet: u
             1,
             Point::new(0, 0),
             Point::new(0, 0),
+            Direction::Stationary,
             1,
         ))
         .with(Position(Point::new(0, 0)))
-        .with(Velocity {
-            speed: 0,
-            direction: Direction::Right,
-        })
         .with(Status {
             alive: true,
             health: 100,
@@ -131,8 +129,9 @@ fn main() -> Result<()> {
         server_addr_parts[2],
         server_addr_parts[3],
     ];
+    let client_addr = &args[2];
     debug!("server addr: {:?}", server_addr);
-    let random_socket_port = rand::thread_rng().gen::<u16>();
+    let random_socket_port = rand::thread_rng().gen_range(8877..65535);
     debug!("socket_port: {}", random_socket_port);
     let runtime: ServerRuntime = ServerRuntime::new(random_socket_port);
     let send_socket = &runtime.send_socket;
@@ -202,18 +201,32 @@ fn main() -> Result<()> {
     recv_socket.set_write_timeout(Some(Duration::new(0, 1_000)))?;
     send_socket.connect(SocketAddr::from((server_addr, SEND_SERVER_PORT)))?;
     recv_socket.connect(SocketAddr::from((server_addr, RECV_SERVER_PORT)))?;
+    match recv_socket.send(&format!("S0;{}", client_addr).into_bytes()) {
+        Ok(number_of_bytes) => {
+            trace!("sent {} bytes to sync", number_of_bytes);
+            match recv_socket.recv_from(&mut []) {
+                Ok(_) => {}
+                Err(error) => {
+                    error!("recv sync: {}", error)
+                }
+            }
+        }
+        Err(error) => {
+            error!("send sync: {}", error)
+        }
+    }
     match recv_socket.send(b"L1;blub_id") {
         Ok(number_of_bytes) => {
             trace!("sent {} bytes to login", number_of_bytes);
             match recv_socket.recv_from(&mut []) {
                 Ok(_) => {}
                 Err(error) => {
-                    trace!("recv login msg: {}", error)
+                    error!("recv login msg: {}", error)
                 }
             }
         }
         Err(error) => {
-            trace!("send login msg: {}", error)
+            error!("send login msg: {}", error)
         }
     }
 
@@ -243,6 +256,7 @@ fn game_loop<'a>(
     mut attacks: VecDeque<AttackCommand>,
 ) -> Result<()> {
     let mut entities: HashMap<String, Entity> = HashMap::new();
+    // let mut sync_trigger
     'running: loop {
         // Handle events
         for event in event_pump.poll_iter() {
@@ -391,16 +405,16 @@ fn game_loop<'a>(
                         match recv_socket.recv(&mut []) {
                             Ok(_) => {}
                             Err(error) => {
-                                trace!("ack Move command: {}", error)
+                                error!("ack Move command: {}", error)
                             }
                         }
                     }
                     Err(error) => {
-                        trace!("sending Move command: {}", error)
+                        error!("sending Move command: {}", error)
                     }
                 }
             }
-            MovementCommand::Stop => {}
+            MovementCommand::Stop => send_player_stationary(recv_socket),
         }
 
         let shoot_command: Option<AttackCommand> =
@@ -448,14 +462,29 @@ fn _remove_entities(world: &mut World, entity: Entity) {
     world.entities().delete(entity).unwrap();
 }
 
+fn send_player_stationary(socket: &UdpSocket) {
+    let msg = format!("M0;blub_id;{}", Direction::Stationary);
+    match socket.send(&msg.into_bytes()) {
+        Ok(_) => {
+            trace!("Send Stationary successful.");
+            match socket.recv(&mut []) {
+                Ok(_) => {}
+                Err(error) => {
+                    error!("ack Stationary command: {}", error)
+                }
+            }
+        }
+        Err(error) => {
+            error!("sending Stationary command: {}", error)
+        }
+    }
+}
+
 fn update_from_server(socket: &UdpSocket) -> Result<ServerUpdate> {
     let mut buf = [0; 200];
-    match socket.recv_from(&mut buf) {
-        Ok((number_of_bytes, src)) => {
+    match socket.recv(&mut buf) {
+        Ok(number_of_bytes) => {
             trace!("update from server; {}", number_of_bytes);
-            match socket.send_to(&[0], src) {
-                _ => {}
-            }
             if number_of_bytes == 1 {
                 return Ok(ServerUpdate::Nothing);
             } else {

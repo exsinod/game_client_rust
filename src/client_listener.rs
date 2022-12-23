@@ -32,6 +32,7 @@ impl<'a> System<'a> for ClientListener {
                         player.id = updated_player.id.clone();
                         player.char_name = updated_player.id.clone();
                         player.pos = updated_player.pos;
+                        player.velocity = updated_player.velocity;
                     }
                 }
             }

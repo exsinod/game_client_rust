@@ -1,6 +1,7 @@
 use std::{
     fmt,
     net::{SocketAddr, UdpSocket},
+    str::FromStr,
 };
 
 use sdl2::rect::{Point, Rect};
@@ -58,6 +59,7 @@ impl ServerRuntime {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Direction {
+    Stationary,
     Up,
     Right,
     Down,
@@ -70,8 +72,23 @@ impl fmt::Display for Direction {
             Self::Right => 1,
             Self::Down => 2,
             Self::Left => 3,
+            Self::Stationary => 4,
         };
         f.write_str(&direction.to_string())
+    }
+}
+impl FromStr for Direction {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "0" => Ok(Direction::Up),
+            "1" => Ok(Direction::Right),
+            "2" => Ok(Direction::Down),
+            "3" => Ok(Direction::Left),
+            "4" => Ok(Direction::Stationary),
+            _ => Err("".to_string()),
+        }
     }
 }
 
@@ -82,6 +99,7 @@ pub struct Player {
     pub char_name: String,
     pub skin: usize,
     pub pos: Point,
+    pub velocity: Direction,
     pub team: u8,
     pub world_pos: Point,
 }
@@ -94,6 +112,7 @@ impl Default for Player {
             char_name: String::default(),
             skin: usize::default(),
             pos: Point::new(0, 0),
+            velocity: Direction::Up,
             team: u8::default(),
             world_pos: Point::new(0, 0),
         }
@@ -107,6 +126,7 @@ impl Player {
         skin: usize,
         world_pos: Point,
         pos: Point,
+        velocity: Direction,
         team: u8,
     ) -> Self {
         Self {
@@ -114,6 +134,7 @@ impl Player {
             char_name,
             skin,
             pos,
+            velocity,
             team,
             world_pos,
         }
@@ -128,6 +149,11 @@ impl Player {
                 parts.next().unwrap_or("0").parse::<i32>().unwrap_or(0),
                 parts.next().unwrap_or("0").parse::<i32>().unwrap_or(0),
             ),
+            velocity: parts
+                .next()
+                .unwrap_or("4")
+                .parse::<Direction>()
+                .unwrap_or(Direction::Stationary),
             team: parts.next().unwrap_or("0").parse::<u8>().unwrap_or(0),
             world_pos: Point::new(
                 parts.next().unwrap_or("0").parse::<i32>().unwrap_or(0),

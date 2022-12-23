@@ -1,5 +1,5 @@
 [package]
-name = "learning_game_rust"
+name = "game_client_wow"
 version = "0.1.0"
 edition = "2021"
 
