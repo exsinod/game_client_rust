@@ -12,7 +12,8 @@ pub fn draw_to_canvas(canvas: &mut WindowCanvas, data: SystemData) -> Result<(),
     let (width, height) = canvas.output_size()?;
 
     for (pos, status) in (&data.0, &data.1).join() {
-        let screen_position = pos.0 + Point::new(width as i32 / 2, (height as i32 - 100) / 2);
+        let screen_position =
+            Point::new(pos.0.x, pos.0.y) + Point::new(width as i32 / 2, (height as i32 - 100) / 2);
         canvas.set_draw_color(Color::RGB(255, 100, 100));
         canvas.fill_rect(Rect::from_center(screen_position.offset(0, 34), 304, 24))?;
         canvas.set_draw_color(Color::GRAY);

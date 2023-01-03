@@ -24,6 +24,9 @@ impl<'a> System<'a> for Keyboard {
             MovementCommand::Move(_direction) => {
                 trace!("move: updating speed and vel");
             }
+            MovementCommand::Stationary => {
+                trace!("stationary: not updating speed and vel");
+            }
             MovementCommand::Stop => {
                 trace!("stop: not updating speed and vel");
             }

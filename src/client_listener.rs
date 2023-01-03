@@ -23,16 +23,22 @@ impl<'a> System<'a> for ClientListener {
         };
 
         match server_update {
-            ServerUpdate::Update(updated_player) => {
-                trace!("server update: {:?}", updated_player);
+            ServerUpdate::Update(updated_players) => {
+                trace!("server update: {:?}", updated_players);
                 for (mut player, position) in (&mut data.2, &mut data.3).join() {
-                    if player.id == updated_player.id {
-                        position.0.x = updated_player.pos.x;
-                        position.0.y = updated_player.pos.y;
-                        player.id = updated_player.id.clone();
-                        player.char_name = updated_player.id.clone();
-                        player.pos = updated_player.pos;
-                        player.velocity = updated_player.velocity;
+                    let current_player = updated_players.get(&player.id);
+                    match current_player {
+                        Some(current_player) => {
+                            if player.id == current_player.id {
+                                position.0.x = current_player.pos.x;
+                                position.0.y = current_player.pos.y;
+                                player.id = current_player.id.clone();
+                                player.char_name = current_player.id.clone();
+                                player.pos = current_player.pos.clone();
+                                player.velocity = current_player.velocity;
+                            }
+                        }
+                        None => {}
                     }
                 }
             }

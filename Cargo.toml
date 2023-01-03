@@ -8,9 +8,12 @@ edition = "2021"
 [dependencies]
 rand = "*"
 log = "*"
+chrono = "*"
 env_logger = "*"
 specs = "*"
 specs-derive = "*"
+serde_json ="*"
+serde = { version = "*", features = ["derive"] }
 
 [dependencies.sdl2]
 version = "*"

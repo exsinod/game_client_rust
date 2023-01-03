@@ -24,7 +24,8 @@ pub fn draw_to_canvas(
         debug!("rendering: {:?}", player);
         let current_frame = sprite.region;
         // Treat the center of the screen as the (0, 0) coordinate
-        let screen_position = player.pos + Point::new(width as i32 / 2, (height as i32 - 100) / 2);
+        let screen_position = Point::new(player.pos.x, player.pos.y)
+            + Point::new(width as i32 / 2, (height as i32 - 100) / 2);
         let screen_rect = Rect::from_center(
             screen_position,
             current_frame.width() * 2,

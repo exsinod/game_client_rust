@@ -8,13 +8,14 @@ mod sprites;
 mod status;
 mod ui;
 
-use log::{debug, error, trace};
+use log::{debug, error, info, trace};
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
 use sdl2::pixels::Color;
-use sdl2::rect::{Point, Rect};
+use sdl2::rect::Rect;
 use sdl2::render::{Texture, WindowCanvas};
 use sdl2::EventPump;
+use std::hash::Hasher;
 use std::net::{SocketAddr, UdpSocket};
 use std::{env, str};
 // "self" imports the "image" module itself as well as everything else we listed
@@ -68,6 +69,7 @@ fn character_animation_frames(
 
 fn initialize_player(world: &mut World, player_id: String, player_spritesheet: usize) -> Entity {
     let player_top_left_frame = Rect::new(0, 0, 26, 36);
+    let player_top_left_frame = Rect::new(0, 0, 32, 36);
 
     let player_animation = MovementAnimation {
         current_frame: 0,
@@ -101,10 +103,12 @@ fn initialize_player(world: &mut World, player_id: String, player_spritesheet: u
             player_id,
             "".to_string(),
             1,
+            true,
             Point::new(0, 0),
             Point::new(0, 0),
-            Direction::Stationary,
+            5,
             1,
+            0,
         ))
         .with(Position(Point::new(0, 0)))
         .with(Status {
@@ -129,10 +133,11 @@ fn main() -> Result<()> {
         server_addr_parts[2],
         server_addr_parts[3],
     ];
-    let client_addr = &args[2];
     debug!("server addr: {:?}", server_addr);
-    let random_socket_port = rand::thread_rng().gen_range(8877..65535);
-    debug!("socket_port: {}", random_socket_port);
+    let client_addr = &args[2];
+    let mode = &args[3];
+    let random_socket_port = rand::thread_rng().gen_range(9000..65535);
+    info!("socket_port: {}", random_socket_port);
     let runtime: ServerRuntime = ServerRuntime::new(random_socket_port);
     let send_socket = &runtime.send_socket;
     let recv_socket = &runtime.recv_socket;
@@ -142,7 +147,7 @@ fn main() -> Result<()> {
 
     let window = video_subsystem
         .window("game tutorial", DIMENSION.width, DIMENSION.height)
-        .position_centered()
+        .position(10, 0)
         .build()
         .expect("could not initialize video subsystem");
 
@@ -204,26 +209,26 @@ fn main() -> Result<()> {
     match recv_socket.send(&format!("S0;{}", client_addr).into_bytes()) {
         Ok(number_of_bytes) => {
             trace!("sent {} bytes to sync", number_of_bytes);
-            match recv_socket.recv_from(&mut []) {
-                Ok(_) => {}
-                Err(error) => {
-                    error!("recv sync: {}", error)
-                }
-            }
+            // match recv_socket.recv_from(&mut []) {
+            //     Ok(_) => {}
+            //     Err(error) => {
+            //         error!("recv sync: {}", error)
+            //     }
+            // }
         }
         Err(error) => {
             error!("send sync: {}", error)
         }
     }
-    match recv_socket.send(b"L1;blub_id") {
+    match recv_socket.send(format!("L1;blub_id;{mode}").as_bytes()) {
         Ok(number_of_bytes) => {
             trace!("sent {} bytes to login", number_of_bytes);
-            match recv_socket.recv_from(&mut []) {
-                Ok(_) => {}
-                Err(error) => {
-                    error!("recv login msg: {}", error)
-                }
-            }
+            // match recv_socket.recv_from(&mut []) {
+            //     Ok(_) => {}
+            //     Err(error) => {
+            //         error!("recv login msg: {}", error)
+            //     }
+            // }
         }
         Err(error) => {
             error!("send login msg: {}", error)
@@ -256,7 +261,6 @@ fn game_loop<'a>(
     mut attacks: VecDeque<AttackCommand>,
 ) -> Result<()> {
     let mut entities: HashMap<String, Entity> = HashMap::new();
-    // let mut sync_trigger
     'running: loop {
         // Handle events
         for event in event_pump.poll_iter() {
@@ -402,19 +406,20 @@ fn game_loop<'a>(
                 match recv_socket.send(&msg.into_bytes()) {
                     Ok(_) => {
                         trace!("send successful");
-                        match recv_socket.recv(&mut []) {
-                            Ok(_) => {}
-                            Err(error) => {
-                                error!("ack Move command: {}", error)
-                            }
-                        }
+                        // match recv_socket.recv(&mut []) {
+                        //     Ok(_) => {}
+                        //     Err(error) => {
+                        //         error!("ack Move command: {}", error)
+                        //     }
+                        // }
                     }
                     Err(error) => {
-                        error!("sending Move command: {}", error)
+                        error!("Error sending MOVE command: {}", error)
                     }
                 }
             }
-            MovementCommand::Stop => send_player_stationary(recv_socket),
+            MovementCommand::Stationary => send_player_stationary(recv_socket),
+            MovementCommand::Stop => {}
         }
 
         let shoot_command: Option<AttackCommand> =
@@ -424,11 +429,13 @@ fn game_loop<'a>(
         match update_from_server(&send_socket) {
             Ok(server_update) => {
                 match &server_update {
-                    ServerUpdate::Update(player_update) => {
-                        if !entities.contains_key(&player_update.id) {
-                            let new_player =
-                                initialize_player(&mut world, player_update.id.clone(), 0);
-                            entities.insert(player_update.id.to_string(), new_player);
+                    ServerUpdate::Update(game_state) => {
+                        for (player_id, _) in game_state {
+                            if !entities.contains_key(player_id) {
+                                let new_player =
+                                    initialize_player(&mut world, player_id.to_string(), 1);
+                                entities.insert(player_id.to_string(), new_player);
+                            }
                         }
                     }
                     _ => {}
@@ -467,24 +474,25 @@ fn send_player_stationary(socket: &UdpSocket) {
     match socket.send(&msg.into_bytes()) {
         Ok(_) => {
             trace!("Send Stationary successful.");
-            match socket.recv(&mut []) {
-                Ok(_) => {}
-                Err(error) => {
-                    error!("ack Stationary command: {}", error)
-                }
-            }
+            // match socket.recv(&mut []) {
+            //     Ok(_) => {}
+            //     Err(error) => {
+            //         error!("ack Stationary command: {}", error)
+            //     }
+            // }
         }
         Err(error) => {
             error!("sending Stationary command: {}", error)
         }
     }
 }
+// {"blub_id":{"id":"blub_id","char_name":"blub_id","skin":0,"logged_in":true,"pos":{"x":100,"y":-10},"velocity":0,"team":0,"world_pos":{"x":0,"y":0},"last_update":1672689424}}
 
 fn update_from_server(socket: &UdpSocket) -> Result<ServerUpdate> {
-    let mut buf = [0; 200];
+    let mut buf = [0; 2000];
     match socket.recv(&mut buf) {
         Ok(number_of_bytes) => {
-            trace!("update from server; {}", number_of_bytes);
+            debug!("Receiver got {} bytes.", number_of_bytes);
             if number_of_bytes == 1 {
                 return Ok(ServerUpdate::Nothing);
             } else {
@@ -495,16 +503,26 @@ fn update_from_server(socket: &UdpSocket) -> Result<ServerUpdate> {
                         return Ok(ServerUpdate::Login(player_id.to_string()));
                     }
                     "P0;" => {
-                        let player = Player::from_str(get_context_from(&buf, number_of_bytes));
-                        debug!("update from server: P0; {:?}", player);
-                        return Ok(ServerUpdate::Update(player));
+                        println!("{}", get_context_from(&buf, number_of_bytes));
+                        let players_updates = match serde_json::from_str::<HashMap<String, Player>>(
+                            get_context_from(&buf, number_of_bytes),
+                        ) {
+                            Ok(value) => value,
+                            Err(error) => {
+                                println!("{error}");
+                                HashMap::new()
+                            }
+                        };
+
+                        debug!("update from server: P0; {:?}", players_updates);
+                        return Ok(ServerUpdate::Update(players_updates));
                     }
                     _ => Ok(ServerUpdate::Nothing),
                 }
             }
         }
         _ => {
-            trace!("update from server, nothing to do");
+            trace!("Receiver found nothing.");
             Ok(ServerUpdate::Nothing)
         }
     }
