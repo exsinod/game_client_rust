@@ -1,17 +1,20 @@
 use std::{
+    collections::HashMap,
     fmt,
     net::{SocketAddr, UdpSocket},
     str::FromStr,
 };
 
-use sdl2::rect::{Point, Rect};
+use chrono::Utc;
+use sdl2::rect::Rect;
+use serde::{Deserialize, Serialize};
 use specs::prelude::*;
 use specs_derive::Component;
 
 pub static RECV_SERVER_PORT: u16 = 8877;
 pub static SEND_SERVER_PORT: u16 = 8878;
 
-static CLIENT_ADDR: [u8; 4] = [0, 0, 0, 0];
+static CLIENT_ADDR: [u8; 4] = [127, 0, 0, 1];
 
 pub struct Dimension {
     pub width: u32,
@@ -24,14 +27,15 @@ pub const DIMENSION: Dimension = Dimension {
 
 #[derive(Clone, Debug)]
 pub enum ServerUpdate {
-    Update(Player),
+    Update(HashMap<String, Player>),
     Login(String),
     Nothing,
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum MovementCommand {
     Stop,
+    Stationary,
     Move(Direction),
 }
 
@@ -57,7 +61,7 @@ impl ServerRuntime {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Direction {
     Stationary,
     Up,
@@ -65,6 +69,7 @@ pub enum Direction {
     Down,
     Left,
 }
+
 impl fmt::Display for Direction {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let direction = match self {
@@ -92,29 +97,32 @@ impl FromStr for Direction {
     }
 }
 
-#[derive(Component, Clone, Debug)]
+#[derive(Component, Clone, Debug, Serialize, Deserialize)]
 #[storage(VecStorage)]
 pub struct Player {
     pub id: String,
     pub char_name: String,
     pub skin: usize,
+    pub logged_in: bool,
     pub pos: Point,
-    pub velocity: Direction,
+    pub velocity: u8,
     pub team: u8,
     pub world_pos: Point,
+    pub last_update: i64,
 }
 
 impl Default for Player {
     fn default() -> Self {
         Self {
-            // id: "MTI3LjAuMC4xOjg3Njc=".to_string(),
             id: String::default(),
             char_name: String::default(),
             skin: usize::default(),
+            logged_in: true,
             pos: Point::new(0, 0),
-            velocity: Direction::Up,
+            velocity: 0,
             team: u8::default(),
             world_pos: Point::new(0, 0),
+            last_update: Utc::now().timestamp(),
         }
     }
 }
@@ -124,42 +132,40 @@ impl Player {
         id: String,
         char_name: String,
         skin: usize,
+        logged_in: bool,
         world_pos: Point,
         pos: Point,
-        velocity: Direction,
+        velocity: u8,
         team: u8,
+        last_update: i64,
     ) -> Self {
         Self {
             id,
             char_name,
             skin,
+            logged_in,
             pos,
             velocity,
             team,
             world_pos,
+            last_update,
         }
     }
-    pub fn from_str(string: &str) -> Self {
-        let mut parts = string.split(";").into_iter();
-        Self {
-            id: parts.next().unwrap_or(&String::new()).to_string(),
-            char_name: parts.next().unwrap_or(&String::new()).to_string(),
-            skin: parts.next().unwrap_or("0").parse::<usize>().unwrap_or(0),
-            pos: Point::new(
-                parts.next().unwrap_or("0").parse::<i32>().unwrap_or(0),
-                parts.next().unwrap_or("0").parse::<i32>().unwrap_or(0),
-            ),
-            velocity: parts
-                .next()
-                .unwrap_or("4")
-                .parse::<Direction>()
-                .unwrap_or(Direction::Stationary),
-            team: parts.next().unwrap_or("0").parse::<u8>().unwrap_or(0),
-            world_pos: Point::new(
-                parts.next().unwrap_or("0").parse::<i32>().unwrap_or(0),
-                parts.next().unwrap_or("0").parse::<i32>().unwrap_or(0),
-            ),
-        }
+}
+
+#[derive(Clone, Debug, Hash, Eq, PartialEq, Serialize, Deserialize)]
+pub struct Point {
+    pub x: i32,
+    pub y: i32,
+}
+impl Point {
+    pub fn new(x: i32, y: i32) -> Self {
+        Self { x, y }
+    }
+}
+impl fmt::Display for Point {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&*format!("{};{}", self.x, self.y))
     }
 }
 

@@ -1,264 +1,227 @@
-mod animator;
 mod client_listener;
 mod components;
-mod health_checker;
-mod keyboard;
-mod physics;
-mod sprites;
-mod status;
 mod ui;
 
-use log::{debug, error, trace};
+use chrono::Utc;
+use log::{debug, error, info, trace};
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
 use sdl2::pixels::Color;
-use sdl2::rect::{Point, Rect};
+use sdl2::rect::Rect;
 use sdl2::render::{Texture, WindowCanvas};
+use sdl2::sys::SDL_GetWindowSize;
 use sdl2::EventPump;
+use std::hash::Hash;
 use std::net::{SocketAddr, UdpSocket};
+use std::process::exit;
+use std::sync::Arc;
 use std::{env, str};
+use tokio::sync::mpsc::{Receiver, Sender};
+use tokio::sync::Mutex;
 // "self" imports the "image" module itself as well as everything else we listed
 use sdl2::image::{self, InitFlag, LoadTexture};
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use specs::prelude::*;
 
-use rand::Rng;
 use std::time::Duration;
 
 use crate::components::*;
 
-type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
-
-/// Returns the row of the spritesheet corresponding to the given direction
-fn direction_spritesheet_row(direction: Direction) -> i32 {
-    match direction {
-        Direction::Up => 3,
-        Direction::Down => 0,
-        Direction::Left => 1,
-        Direction::Right => 2,
-        Direction::Stationary => 4,
-    }
-}
-
-/// Create animation frames for the standard character spritesheet
-fn character_animation_frames(
-    spritesheet: usize,
-    top_left_frame: Rect,
-    direction: Direction,
-) -> Vec<Sprite> {
-    let (frame_width, frame_height) = top_left_frame.size();
-    let y_offset = top_left_frame.y() + frame_height as i32 * direction_spritesheet_row(direction);
-
-    let mut frames = Vec::new();
-    for i in 0..3 {
-        frames.push(Sprite {
-            spritesheet,
-            region: Rect::new(
-                top_left_frame.x() + frame_width as i32 * i,
-                y_offset,
-                frame_width,
-                frame_height,
-            ),
-        })
-    }
-
-    frames
-}
-
-fn initialize_player(world: &mut World, player_id: String, player_spritesheet: usize) -> Entity {
-    let player_top_left_frame = Rect::new(0, 0, 26, 36);
-
-    let player_animation = MovementAnimation {
-        current_frame: 0,
-        up_frames: character_animation_frames(
-            player_spritesheet,
-            player_top_left_frame,
-            Direction::Up,
-        ),
-        down_frames: character_animation_frames(
-            player_spritesheet,
-            player_top_left_frame,
-            Direction::Down,
-        ),
-        left_frames: character_animation_frames(
-            player_spritesheet,
-            player_top_left_frame,
-            Direction::Left,
-        ),
-        right_frames: character_animation_frames(
-            player_spritesheet,
-            player_top_left_frame,
-            Direction::Right,
-        ),
-    };
-
+fn initialize_player(world: &mut World, player: Player) -> Entity {
     world
         .create_entity()
-        .with(KeyboardControlled)
-        .with(ExternalControlled)
-        .with(Player::new(
-            player_id,
-            "".to_string(),
-            1,
-            Point::new(0, 0),
-            Point::new(0, 0),
-            Direction::Stationary,
-            1,
-        ))
+        .with(player)
         .with(Position(Point::new(0, 0)))
-        .with(Status {
-            alive: true,
-            health: 100,
-        })
-        .with(player_animation.right_frames[0].clone())
-        .with(player_animation)
         .build()
 }
 
-fn main() -> Result<()> {
+fn main() {
     env_logger::init();
-    let args: Vec<String> = env::args().collect();
-    let server_addr_parts: &Vec<u8> = &args[1]
-        .split(".")
-        .map(|part| u8::from_str_radix(part, 10).unwrap())
-        .collect::<Vec<u8>>();
-    let server_addr = [
-        server_addr_parts[0],
-        server_addr_parts[1],
-        server_addr_parts[2],
-        server_addr_parts[3],
-    ];
-    let client_addr = &args[2];
-    debug!("server addr: {:?}", server_addr);
-    let random_socket_port = rand::thread_rng().gen_range(8877..65535);
-    debug!("socket_port: {}", random_socket_port);
-    let runtime: ServerRuntime = ServerRuntime::new(random_socket_port);
-    let send_socket = &runtime.send_socket;
-    let recv_socket = &runtime.recv_socket;
-    let sdl_context = sdl2::init()?;
-    let video_subsystem = sdl_context.video()?;
-    let _image_context = image::init(InitFlag::PNG | InitFlag::JPG)?;
-
-    let window = video_subsystem
-        .window("game tutorial", DIMENSION.width, DIMENSION.height)
-        .position_centered()
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_io()
+        .worker_threads(10)
         .build()
-        .expect("could not initialize video subsystem");
-
-    let canvas = window
-        .into_canvas()
-        .build()
-        .expect("could not make a canvas");
-
-    let texture_creator = canvas.texture_creator();
-
-    let mut dispatcher = DispatcherBuilder::new()
-        .with(client_listener::ClientListener, "ClientListener", &[])
-        .with(health_checker::HealthChecker, "HealthChecker", &[])
-        .with(keyboard::Keyboard, "Keyboard", &[])
-        // .with(physics::Physics, "Physics", &["Keyboard"])
-        // .with(animator::Animator, "Animator", &["Keyboard"])
-        // .with(physics::Physics, "Physics", &[])
-        .with(animator::Animator, "Animator", &[])
-        .build();
-
-    let mut world = World::new();
-    dispatcher.setup(&mut world);
-    status::SystemData::setup(&mut world);
-    sprites::SystemData::setup(&mut world);
-    ui::SystemData::setup(&mut world);
-
-    // Initialize resource
-    let server_update: Option<ServerUpdate> = None;
-    let movement_command: Option<MovementCommand> = None;
-    let shoot_command: Option<AttackCommand> = None;
-    world.insert(movement_command);
-    world.insert(server_update);
-    world.insert(shoot_command);
-
-    let bardo = include_bytes!("../assets/bardo.png");
-    let reaper = include_bytes!("../assets/reaper.png");
-    let textures = [
-        texture_creator.load_texture_bytes(bardo)?,
-        texture_creator.load_texture_bytes(reaper)?,
-    ];
-    // First texture in textures array
-    let _player_spritesheet = 0;
-    // Second texture in the textures array
-    let _enemy_spritesheet = 1;
-
-    // initialize_enemy(&mut world, enemy_spritesheet, Point::new(-150, -150));
-    // initialize_enemy(&mut world, enemy_spritesheet, Point::new(150, -190));
-    // initialize_enemy(&mut world, enemy_spritesheet, Point::new(-150, 170));
-
-    // Create UI
-    world.create_entity().with(UiComponent {}).build();
-
-    send_socket.set_read_timeout(Some(Duration::new(0, 1_000)))?;
-    send_socket.set_write_timeout(Some(Duration::new(0, 1_000)))?;
-    recv_socket.set_read_timeout(Some(Duration::new(0, 1_000)))?;
-    recv_socket.set_write_timeout(Some(Duration::new(0, 1_000)))?;
-    send_socket.connect(SocketAddr::from((server_addr, SEND_SERVER_PORT)))?;
-    recv_socket.connect(SocketAddr::from((server_addr, RECV_SERVER_PORT)))?;
-    match recv_socket.send(&format!("S0;{}", client_addr).into_bytes()) {
-        Ok(number_of_bytes) => {
-            trace!("sent {} bytes to sync", number_of_bytes);
-            match recv_socket.recv_from(&mut []) {
-                Ok(_) => {}
-                Err(error) => {
-                    error!("recv sync: {}", error)
+        .unwrap();
+    let rt = runtime.handle();
+    rt.block_on(async move {
+        let (tx_game_state, rx_game_state) = tokio::sync::mpsc::channel::<String>(200);
+        let (tx_move_command, mut rx_move_command) = tokio::sync::mpsc::channel::<String>(200);
+        let sender_task = rt.spawn(async move {
+            println!("started sender task");
+            let socket = UdpSocket::bind(SocketAddr::from(([127, 0, 0, 1], 9998))).unwrap();
+            socket.connect("127.0.0.1:8877").unwrap();
+            loop {
+                match rx_move_command.try_recv() {
+                    Ok(msg) => {
+                        println!("received move command");
+                        match socket.send(&msg.into_bytes()) {
+                            Ok(_) => {}
+                            Err(error) => {
+                                error!("sending command: {}", error)
+                            }
+                        }
+                    }
+                    Err(_) => {
+                        println!("got nothing")
+                    }
                 }
+                ::std::thread::sleep(Duration::new(0, 1_000_000_000u32 / 20));
             }
-        }
-        Err(error) => {
-            error!("send sync: {}", error)
-        }
-    }
-    match recv_socket.send(b"L1;blub_id") {
+        });
+
+        let receiver_task = rt.spawn(async move {
+            println!("started receiver task");
+            let socket = UdpSocket::bind(SocketAddr::from(([127, 0, 0, 1], 9999))).unwrap();
+            socket.set_nonblocking(false).unwrap();
+            let tx_game_state_clone = tx_game_state.clone();
+            let mut timer = Utc::now().timestamp();
+            loop {
+                let mut buf = [0; 2000];
+                match socket.recv(&mut buf) {
+                    Ok(number_of_bytes) => {
+                        debug!("Receiver got {} bytes.", number_of_bytes);
+                        if number_of_bytes == 1 {
+                            // return Ok(ServerUpdate::Nothing);
+                        } else {
+                            match get_operation_from(&buf) {
+                                "L1;" => {
+                                    let player_id: &str = get_context_from(&buf, number_of_bytes);
+                                    debug!("get op L1; {}", player_id);
+                                    // return Ok(ServerUpdate::Login(player_id.to_string()));
+                                }
+                                "P0;" => {
+                                    debug!("{}", get_context_from(&buf, number_of_bytes));
+                                    let players_updates =
+                                        match serde_json::from_str::<HashMap<String, Player>>(
+                                            get_context_from(&buf, number_of_bytes),
+                                        ) {
+                                            Ok(value) => value,
+                                            Err(error) => {
+                                                println!("{error}");
+                                                HashMap::new()
+                                            }
+                                        };
+
+                                    if timer > Utc::now().timestamp() - 300 {
+                                        debug!("update from server: P0; {:?}", players_updates);
+                                        match tx_game_state_clone
+                                            .send(serde_json::to_string(&players_updates).unwrap())
+                                            .await
+                                        {
+                                            Ok(value) => {}
+                                            Err(error) => {
+                                                println!("error sending: {}", error)
+                                            }
+                                        }
+                                        timer = Utc::now().timestamp();
+                                    }
+                                    // return Ok(ServerUpdate::Update(players_updates));
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                    _ => {
+                        trace!("Receiver found nothing.");
+                        // Ok(ServerUpdate::Nothing)
+                    }
+                }
+                ::std::thread::sleep(Duration::new(0, 1_000_000_000u32 / 20));
+            }
+        });
+        let game_loop_task = rt.spawn(async move {
+            let sdl_context = sdl2::init().unwrap();
+            let video_subsystem = sdl_context.video().unwrap();
+            let _image_context = image::init(InitFlag::PNG | InitFlag::JPG).unwrap();
+
+            let window = video_subsystem
+                .window("game tutorial", DIMENSION.width, DIMENSION.height)
+                .position(1000, 0)
+                .build()
+                .expect("could not initialize video subsystem");
+
+            let canvas = window
+                .into_canvas()
+                .build()
+                .expect("could not make a canvas");
+
+            let texture_creator = canvas.texture_creator();
+
+            let mut dispatcher = DispatcherBuilder::new()
+                // .with(client_listener::ClientListener, "ClientListener", &[])
+                // .with(health_checker::HealthChecker, "HealthChecker", &[])
+                // .with(keyboard::Keyboard, "Keyboard", &[])
+                // .with(physics::Physics, "Physics", &["Keyboard"])
+                // .with(animator::Animator, "Animator", &["Keyboard"])
+                // .with(physics::Physics, "Physics", &[])
+                // .with(animator::Animator, "Animator", &[])
+                .build();
+
+            let mut world = World::new();
+            dispatcher.setup(&mut world);
+            client_listener::SystemData::setup(&mut world);
+            // status::SystemData::setup(&mut world);
+            // sprites::SystemData::setup(&mut world);
+            ui::SystemData::setup(&mut world);
+
+            // Initialize resource
+            let server_update: Option<ServerUpdate> = None;
+            let movement_command: Option<MovementCommand> = None;
+            let shoot_command: Option<AttackCommand> = None;
+            world.insert(movement_command);
+            world.insert(server_update);
+            world.insert(shoot_command);
+
+            // let player_entity = initialize_player(&mut world, Player::default());
+            // world.insert(player_entity);
+
+            // world.create_entity().with(UiComponent {}).build();
+
+            game_loop(
+                rx_game_state,
+                tx_move_command,
+                world,
+                canvas,
+                dispatcher,
+                sdl_context.event_pump().unwrap(),
+            );
+        });
+        let (_, _, _) = tokio::join!(sender_task, receiver_task, game_loop_task);
+    });
+}
+
+fn game_loop<'a>(
+    mut rx_game_state: Receiver<String>,
+    tx_move_command: Sender<String>,
+    mut world: World,
+    mut canvas: WindowCanvas,
+    mut dispatcher: Dispatcher<'a, 'a>,
+    mut event_pump: EventPump,
+) {
+    let mut entities: HashSet<String> = HashSet::new();
+    let mut movements: VecDeque<MovementCommand> = VecDeque::new();
+    let mut attacks: VecDeque<AttackCommand> = VecDeque::new();
+    let recv_socket: UdpSocket = UdpSocket::bind("127.0.0.1:9092").unwrap();
+    recv_socket.connect("127.0.0.1:8877").unwrap();
+    let mut timer = Utc::now().timestamp_millis();
+    match recv_socket.send(format!("{};L1;blub_id;1;player", Utc::now().timestamp()).as_bytes()) {
         Ok(number_of_bytes) => {
             trace!("sent {} bytes to login", number_of_bytes);
-            match recv_socket.recv_from(&mut []) {
-                Ok(_) => {}
-                Err(error) => {
-                    error!("recv login msg: {}", error)
-                }
-            }
+            // match recv_socket.recv_from(&mut []) {
+            //     Ok(_) => {}
+            //     Err(error) => {
+            //         error!("recv login msg: {}", error)
+            //     }
+            // }
         }
         Err(error) => {
             error!("send login msg: {}", error)
         }
     }
-
-    game_loop(
-        world,
-        canvas,
-        &textures,
-        dispatcher,
-        sdl_context.event_pump()?,
-        send_socket,
-        recv_socket,
-        VecDeque::new(),
-        VecDeque::new(),
-    )?;
-    Ok(())
-}
-
-fn game_loop<'a>(
-    mut world: World,
-    mut canvas: WindowCanvas,
-    textures: &[Texture<'a>],
-    mut dispatcher: Dispatcher<'a, 'a>,
-    mut event_pump: EventPump,
-    send_socket: &UdpSocket,
-    recv_socket: &UdpSocket,
-    mut movements: VecDeque<MovementCommand>,
-    mut attacks: VecDeque<AttackCommand>,
-) -> Result<()> {
-    let mut entities: HashMap<String, Entity> = HashMap::new();
-    // let mut sync_trigger
+    let mut last_movement_command: MovementCommand = MovementCommand::Stop;
     'running: loop {
-        // Handle events
+        let mut ents = entities.clone();
         for event in event_pump.poll_iter() {
             match event {
                 Event::Quit { .. }
@@ -395,49 +358,44 @@ fn game_loop<'a>(
         }
 
         let movement_command: MovementCommand =
-            *movements.front().unwrap_or(&MovementCommand::Stop);
-        match movement_command {
-            MovementCommand::Move(direction) => {
-                let msg = format!("M0;blub_id;{}", direction);
-                match recv_socket.send(&msg.into_bytes()) {
-                    Ok(_) => {
-                        trace!("send successful");
-                        match recv_socket.recv(&mut []) {
-                            Ok(_) => {}
-                            Err(error) => {
-                                error!("ack Move command: {}", error)
-                            }
+            *movements.front_mut().unwrap_or(&mut MovementCommand::Stop);
+        if last_movement_command != movement_command {
+            println!("sending {movement_command:?} to tx_move_command");
+            match movement_command {
+                MovementCommand::Move(direction) => {
+                    let msg = format!("{};M0;blub_id;{}", Utc::now().timestamp_millis(), direction);
+                    println!("moved {msg}");
+                    match tx_move_command.try_send(msg) {
+                        Ok(_) => {
+                            println!("sent to tx_move_command")
+                        }
+                        Err(error) => {
+                            println!("{error}")
                         }
                     }
-                    Err(error) => {
-                        error!("sending Move command: {}", error)
-                    }
                 }
+                MovementCommand::Stop => send_player_stationary(tx_move_command.clone()),
+                _ => {}
             }
-            MovementCommand::Stop => send_player_stationary(recv_socket),
+            last_movement_command = movement_command;
         }
 
-        let shoot_command: Option<AttackCommand> =
-            Some(attacks.pop_front().unwrap_or(AttackCommand::Stop));
-        *world.write_resource() = shoot_command;
-
-        match update_from_server(&send_socket) {
-            Ok(server_update) => {
-                match &server_update {
-                    ServerUpdate::Update(player_update) => {
-                        if !entities.contains_key(&player_update.id) {
-                            let new_player =
-                                initialize_player(&mut world, player_update.id.clone(), 0);
-                            entities.insert(player_update.id.to_string(), new_player);
-                        }
-                    }
-                    _ => {}
-                }
-                *world.write_resource() = Some(server_update);
+        let update = serde_json::from_str::<HashMap<String, Player>>(
+            &rx_game_state.try_recv().unwrap_or("no update".to_string()),
+        )
+        .unwrap_or(HashMap::new());
+        trace!("game loop received: {:?}", update);
+        // let entities = update
+        //     .values()
+        //     .map(|u| initialize_player(world, u.to_owned()));
+        for player in update.values() {
+            if !ents.contains(&player.id) {
+                trace!("initialize_player");
+                initialize_player(&mut world, player.clone());
+                ents.insert(player.clone().id);
             }
-            _ => {}
         }
-
+        world.insert(Some(ServerUpdate::Update(update)));
         // Update
         dispatcher.dispatch(&mut world);
         world.maintain();
@@ -446,68 +404,44 @@ fn game_loop<'a>(
         canvas.set_draw_color(Color::RGB(65, 64, 255));
         canvas.clear();
 
-        status::draw_to_canvas(&mut canvas, world.system_data())?;
-        sprites::draw_to_canvas(&mut canvas, &textures, world.system_data())?;
-        ui::draw_to_canvas(&mut canvas, Color::RGB(65, 255, 255), world.system_data())?;
+        // status::draw_to_canvas(&mut canvas, world.system_data()).unwrap();
+        client_listener::draw_to_canvas(&mut canvas, world.system_data()).unwrap();
+        ui::draw_to_canvas(&mut canvas, Color::RGB(65, 255, 255), world.system_data()).unwrap();
 
         canvas.present();
+        // for ent in &ents {
+        //     world.remove::<Entity>();
+        // }
 
         // Time management!
         ::std::thread::sleep(Duration::new(0, 1_000_000_000u32 / 20));
+        entities = ents;
     }
-    Ok(())
+    exit(0);
 }
 
-fn _remove_entities(world: &mut World, entity: Entity) {
-    world.entities().delete(entity).unwrap();
-}
+fn send_player_stationary(tx_move_command: Sender<String>) {
+    let msg = format!(
+        "{};M0;blub_id;{}",
+        Utc::now().timestamp(),
+        Direction::Stationary
+    );
 
-fn send_player_stationary(socket: &UdpSocket) {
-    let msg = format!("M0;blub_id;{}", Direction::Stationary);
-    match socket.send(&msg.into_bytes()) {
-        Ok(_) => {
-            trace!("Send Stationary successful.");
-            match socket.recv(&mut []) {
-                Ok(_) => {}
-                Err(error) => {
-                    error!("ack Stationary command: {}", error)
-                }
-            }
-        }
-        Err(error) => {
-            error!("sending Stationary command: {}", error)
-        }
-    }
-}
-
-fn update_from_server(socket: &UdpSocket) -> Result<ServerUpdate> {
-    let mut buf = [0; 200];
-    match socket.recv(&mut buf) {
-        Ok(number_of_bytes) => {
-            trace!("update from server; {}", number_of_bytes);
-            if number_of_bytes == 1 {
-                return Ok(ServerUpdate::Nothing);
-            } else {
-                match get_operation_from(&buf) {
-                    "L1;" => {
-                        let player_id: &str = get_context_from(&buf, number_of_bytes);
-                        debug!("get op L1; {}", player_id);
-                        return Ok(ServerUpdate::Login(player_id.to_string()));
-                    }
-                    "P0;" => {
-                        let player = Player::from_str(get_context_from(&buf, number_of_bytes));
-                        debug!("update from server: P0; {:?}", player);
-                        return Ok(ServerUpdate::Update(player));
-                    }
-                    _ => Ok(ServerUpdate::Nothing),
-                }
-            }
-        }
-        _ => {
-            trace!("update from server, nothing to do");
-            Ok(ServerUpdate::Nothing)
-        }
-    }
+    tx_move_command.try_send(msg).unwrap();
+    // match socket.send(&msg.into_bytes()) {
+    //     Ok(_) => {
+    //         trace!("Send Stationary successful.");
+    //         // match socket.recv(&mut []) {
+    //         //     Ok(_) => {}
+    //         //     Err(error) => {
+    //         //         error!("ack Stationary command: {}", error)
+    //         //     }
+    //         // }
+    //     }
+    //     Err(error) => {
+    //         error!("sending Stationary command: {}", error)
+    //     }
+    // }
 }
 
 fn get_operation_from(buffer: &[u8]) -> &str {
