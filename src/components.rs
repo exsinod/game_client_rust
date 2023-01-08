@@ -27,7 +27,7 @@ pub const DIMENSION: Dimension = Dimension {
 
 #[derive(Clone, Debug)]
 pub enum ServerUpdate {
-    Update(HashMap<String, Player>),
+    Update(Vec<Player>),
     Login(String),
     Nothing,
 }
@@ -114,7 +114,7 @@ pub struct Player {
 impl Default for Player {
     fn default() -> Self {
         Self {
-            id: String::default(),
+            id: String::from("blub_id1"),
             char_name: String::default(),
             skin: usize::default(),
             logged_in: true,
@@ -181,6 +181,16 @@ pub struct KeyboardControlled;
 #[derive(Component, Debug)]
 #[storage(VecStorage)]
 pub struct Position(pub Point);
+
+#[derive(Component, Debug, Eq, PartialEq)]
+#[storage(VecStorage)]
+pub enum EntityType {
+    Main,
+    Other,
+}
+#[derive(Component, Debug)]
+#[storage(VecStorage)]
+pub struct EntityResource(pub EntityType);
 
 /// The current speed and direction of a given entity
 #[derive(Component, Debug)]

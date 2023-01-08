@@ -1,15 +1,19 @@
 mod client_listener;
 mod components;
+mod keyboard;
+mod renderer;
+mod syncer;
 mod ui;
 
 use chrono::Utc;
+use futures::StreamExt;
 use log::{debug, error, info, trace};
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
 use sdl2::pixels::Color;
 use sdl2::rect::Rect;
 use sdl2::render::{Texture, WindowCanvas};
-use sdl2::sys::SDL_GetWindowSize;
+use sdl2::sys::{CurrentTime, SDL_GetWindowSize};
 use sdl2::EventPump;
 use std::hash::Hash;
 use std::net::{SocketAddr, UdpSocket};
@@ -28,11 +32,20 @@ use std::time::Duration;
 
 use crate::components::*;
 
+fn initialize_main_player(world: &mut World, player: Player) -> Entity {
+    world
+        .create_entity()
+        .with(KeyboardControlled)
+        .with(EntityResource(EntityType::Main))
+        .with(player)
+        .build()
+}
+
 fn initialize_player(world: &mut World, player: Player) -> Entity {
     world
         .create_entity()
+        .with(EntityResource(EntityType::Other))
         .with(player)
-        .with(Position(Point::new(0, 0)))
         .build()
 }
 
@@ -49,12 +62,12 @@ fn main() {
         let (tx_move_command, mut rx_move_command) = tokio::sync::mpsc::channel::<String>(200);
         let sender_task = rt.spawn(async move {
             println!("started sender task");
-            let socket = UdpSocket::bind(SocketAddr::from(([127, 0, 0, 1], 9998))).unwrap();
+            let socket = UdpSocket::bind(SocketAddr::from(([127, 0, 0, 1], 9978))).unwrap();
             socket.connect("127.0.0.1:8877").unwrap();
             loop {
                 match rx_move_command.try_recv() {
                     Ok(msg) => {
-                        println!("received move command");
+                        // println!("received move command");
                         match socket.send(&msg.into_bytes()) {
                             Ok(_) => {}
                             Err(error) => {
@@ -63,7 +76,7 @@ fn main() {
                         }
                     }
                     Err(_) => {
-                        println!("got nothing")
+                        // println!("got nothing")
                     }
                 }
                 ::std::thread::sleep(Duration::new(0, 1_000_000_000u32 / 20));
@@ -72,7 +85,7 @@ fn main() {
 
         let receiver_task = rt.spawn(async move {
             println!("started receiver task");
-            let socket = UdpSocket::bind(SocketAddr::from(([127, 0, 0, 1], 9999))).unwrap();
+            let socket = UdpSocket::bind(SocketAddr::from(([127, 0, 0, 1], 9979))).unwrap();
             socket.set_nonblocking(false).unwrap();
             let tx_game_state_clone = tx_game_state.clone();
             let mut timer = Utc::now().timestamp();
@@ -91,33 +104,39 @@ fn main() {
                                     // return Ok(ServerUpdate::Login(player_id.to_string()));
                                 }
                                 "P0;" => {
-                                    debug!("{}", get_context_from(&buf, number_of_bytes));
+                                    // println!("P0; {}", get_context_from(&buf, number_of_bytes));
                                     let players_updates =
                                         match serde_json::from_str::<HashMap<String, Player>>(
                                             get_context_from(&buf, number_of_bytes),
                                         ) {
-                                            Ok(value) => value,
+                                            Ok(value) => {
+                                                // println!("{value:?}");
+                                                value
+                                            }
                                             Err(error) => {
                                                 println!("{error}");
                                                 HashMap::new()
                                             }
                                         };
 
-                                    if timer > Utc::now().timestamp() - 300 {
-                                        debug!("update from server: P0; {:?}", players_updates);
-                                        match tx_game_state_clone
-                                            .send(serde_json::to_string(&players_updates).unwrap())
-                                            .await
-                                        {
-                                            Ok(value) => {}
-                                            Err(error) => {
-                                                println!("error sending: {}", error)
-                                            }
+                                    // if timer > Utc::now().timestamp() - 300 {
+                                    // println!(
+                                    //     "update from server: P0; {:?}",
+                                    //     serde_json::to_string(&players_updates).unwrap()
+                                    // );
+                                    match tx_game_state_clone
+                                        .send(serde_json::to_string(&players_updates).unwrap())
+                                        .await
+                                    {
+                                        Ok(value) => {}
+                                        Err(error) => {
+                                            println!("error sending: {}", error)
                                         }
-                                        timer = Utc::now().timestamp();
                                     }
-                                    // return Ok(ServerUpdate::Update(players_updates));
+                                    timer = Utc::now().timestamp();
                                 }
+                                // return Ok(ServerUpdate::Update(players_updates));
+                                // }
                                 _ => {}
                             }
                         }
@@ -151,7 +170,7 @@ fn main() {
             let mut dispatcher = DispatcherBuilder::new()
                 // .with(client_listener::ClientListener, "ClientListener", &[])
                 // .with(health_checker::HealthChecker, "HealthChecker", &[])
-                // .with(keyboard::Keyboard, "Keyboard", &[])
+                .with(keyboard::Keyboard, "Keyboard", &[])
                 // .with(physics::Physics, "Physics", &["Keyboard"])
                 // .with(animator::Animator, "Animator", &["Keyboard"])
                 // .with(physics::Physics, "Physics", &[])
@@ -163,6 +182,7 @@ fn main() {
             client_listener::SystemData::setup(&mut world);
             // status::SystemData::setup(&mut world);
             // sprites::SystemData::setup(&mut world);
+            renderer::SystemData::setup(&mut world);
             ui::SystemData::setup(&mut world);
 
             // Initialize resource
@@ -173,12 +193,13 @@ fn main() {
             world.insert(server_update);
             world.insert(shoot_command);
 
-            // let player_entity = initialize_player(&mut world, Player::default());
-            // world.insert(player_entity);
+            let main_player = initialize_main_player(&mut world, Player::default());
+            world.insert(main_player);
 
             // world.create_entity().with(UiComponent {}).build();
 
             game_loop(
+                main_player,
                 rx_game_state,
                 tx_move_command,
                 world,
@@ -192,6 +213,7 @@ fn main() {
 }
 
 fn game_loop<'a>(
+    main_player: Entity,
     mut rx_game_state: Receiver<String>,
     tx_move_command: Sender<String>,
     mut world: World,
@@ -202,10 +224,9 @@ fn game_loop<'a>(
     let mut entities: HashSet<String> = HashSet::new();
     let mut movements: VecDeque<MovementCommand> = VecDeque::new();
     let mut attacks: VecDeque<AttackCommand> = VecDeque::new();
-    let recv_socket: UdpSocket = UdpSocket::bind("127.0.0.1:9092").unwrap();
+    let recv_socket: UdpSocket = UdpSocket::bind("127.0.0.1:9094").unwrap();
     recv_socket.connect("127.0.0.1:8877").unwrap();
-    let mut timer = Utc::now().timestamp_millis();
-    match recv_socket.send(format!("{};L1;blub_id;1;player", Utc::now().timestamp()).as_bytes()) {
+    match recv_socket.send(format!("{};L1;blub_id1;1;player", Utc::now().timestamp()).as_bytes()) {
         Ok(number_of_bytes) => {
             trace!("sent {} bytes to login", number_of_bytes);
             // match recv_socket.recv_from(&mut []) {
@@ -220,6 +241,8 @@ fn game_loop<'a>(
         }
     }
     let mut last_movement_command: MovementCommand = MovementCommand::Stop;
+    let sync_socket = UdpSocket::bind("127.0.0.1:9901").unwrap();
+    sync_socket.connect("127.0.0.1:8866").unwrap();
     'running: loop {
         let mut ents = entities.clone();
         for event in event_pump.poll_iter() {
@@ -359,22 +382,30 @@ fn game_loop<'a>(
 
         let movement_command: MovementCommand =
             *movements.front_mut().unwrap_or(&mut MovementCommand::Stop);
+        *world.write_resource() = Some(movement_command);
         if last_movement_command != movement_command {
-            println!("sending {movement_command:?} to tx_move_command");
+            // println!("sending {movement_command:?} to tx_move_command");
             match movement_command {
                 MovementCommand::Move(direction) => {
-                    let msg = format!("{};M0;blub_id;{}", Utc::now().timestamp_millis(), direction);
-                    println!("moved {msg}");
+                    let msg = format!(
+                        "{};M0;blub_id1;{}",
+                        Utc::now().timestamp_millis(),
+                        direction
+                    );
+                    // println!("moved {msg}");
                     match tx_move_command.try_send(msg) {
                         Ok(_) => {
-                            println!("sent to tx_move_command")
+                            // println!("sent to tx_move_command")
                         }
                         Err(error) => {
-                            println!("{error}")
+                            // println!("{error}")
                         }
                     }
                 }
-                MovementCommand::Stop => send_player_stationary(tx_move_command.clone()),
+                MovementCommand::Stop => {
+                    send_player_stationary(tx_move_command.clone());
+                    syncer::sync_pos_to_server(&sync_socket, world.system_data()).unwrap();
+                }
                 _ => {}
             }
             last_movement_command = movement_command;
@@ -384,18 +415,20 @@ fn game_loop<'a>(
             &rx_game_state.try_recv().unwrap_or("no update".to_string()),
         )
         .unwrap_or(HashMap::new());
-        trace!("game loop received: {:?}", update);
+        // println!("game loop received: {:?}", update);
         // let entities = update
         //     .values()
         //     .map(|u| initialize_player(world, u.to_owned()));
         for player in update.values() {
-            if !ents.contains(&player.id) {
+            if player.id != "blub_id1" && !ents.contains(&player.id) {
                 trace!("initialize_player");
                 initialize_player(&mut world, player.clone());
                 ents.insert(player.clone().id);
             }
         }
-        world.insert(Some(ServerUpdate::Update(update)));
+        world.insert(main_player);
+        let players = update.into_values().collect::<Vec<Player>>();
+        world.insert(Some(ServerUpdate::Update(players)));
         // Update
         dispatcher.dispatch(&mut world);
         world.maintain();
@@ -406,6 +439,7 @@ fn game_loop<'a>(
 
         // status::draw_to_canvas(&mut canvas, world.system_data()).unwrap();
         client_listener::draw_to_canvas(&mut canvas, world.system_data()).unwrap();
+        renderer::draw_to_canvas(&mut canvas, world.system_data()).unwrap();
         ui::draw_to_canvas(&mut canvas, Color::RGB(65, 255, 255), world.system_data()).unwrap();
 
         canvas.present();
@@ -422,7 +456,7 @@ fn game_loop<'a>(
 
 fn send_player_stationary(tx_move_command: Sender<String>) {
     let msg = format!(
-        "{};M0;blub_id;{}",
+        "{};M0;blub_id1;{}",
         Utc::now().timestamp(),
         Direction::Stationary
     );

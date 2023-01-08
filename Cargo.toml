@@ -15,6 +15,7 @@ specs-derive = "*"
 serde_json ="*"
 serde = { version = "*", features = ["derive"] }
 tokio = { version = "*", features = ["full"] }
+futures = "*"
 
 [dependencies.sdl2]
 version = "*"
